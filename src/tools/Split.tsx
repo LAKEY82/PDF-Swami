@@ -1,12 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import  { useState, useRef, useEffect } from 'react';
+// import { useNavigate } from 'react-router-dom';
 import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist';
 import { 
   UploadCloud, 
   X, 
   FileText, 
-  ArrowLeft, 
+//   ArrowLeft, 
   Loader2, 
   Scissors, 
   Plus, 
@@ -32,7 +32,7 @@ interface PageRange {
 }
 
 function Split() {
-  const navigate = useNavigate();
+//   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [selectedFile, setSelectedFile] = useState<File | null>(null);

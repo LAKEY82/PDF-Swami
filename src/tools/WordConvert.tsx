@@ -5,12 +5,12 @@ import {
   FileText, 
   Loader2, 
   CheckCircle2, 
-  RefreshCw,
+//   RefreshCw,
   Info,
   Layers,
   Type,
   Star,
-  Eye
+//   Eye
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';

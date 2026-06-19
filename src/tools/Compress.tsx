@@ -31,7 +31,7 @@ function Compress() {
   
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
-  const [compressedBlobUrl, setCompressedBlobUrl] = useState<string | null>(null);
+//   const [compressedBlobUrl, setCompressedBlobUrl] = useState<string | null>(null);
   const [savingMetrics, setSavingMetrics] = useState<{ newSize: string; percentage: number } | null>(null);
 
   const formatBytes = (bytes: number, decimals = 1) => {
@@ -49,7 +49,7 @@ function Compress() {
     if (file.type !== 'application/pdf') return;
 
     setIsProcessing(true);
-    setCompressedBlobUrl(null);
+    // setCompressedBlobUrl(null);
     setSavingMetrics(null);
 
     try {
@@ -113,7 +113,7 @@ function Compress() {
       const compressedBlob = new Blob([safeBytes], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(compressedBlob);
 
-      setCompressedBlobUrl(blobUrl);
+    //   setCompressedBlobUrl(blobUrl);
       setSavingMetrics({
         newSize: formatBytes(displaySize),
         percentage: reductionPercentage
@@ -135,7 +135,7 @@ function Compress() {
 
   const resetState = () => {
     setSelectedItem(null);
-    setCompressedBlobUrl(null);
+    // setCompressedBlobUrl(null);
     setSavingMetrics(null);
     setCompressionLevel('recommended');
   };
