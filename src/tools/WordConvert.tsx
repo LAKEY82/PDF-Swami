@@ -100,8 +100,8 @@ const handleConvertPipelineRun = async () => {
       // Structural sort: Ensure objects are parsed top-to-bottom, left-to-right
       const items = [...textContent.items].sort((a: any, b: any) => {
         const yDiff = b.transform[5] - a.transform[5];
-        if (Math.abs(yDiff) > 5) return yDiff; // Higher Y coordinate comes first
-        return a.transform[4] - b.transform[4]; // Leftmost X coordinate comes first
+        if (Math.abs(yDiff) > 5) return yDiff;
+        return a.transform[4] - b.transform[4];
       });
 
       let currentLineY: number | null = null;
@@ -113,9 +113,9 @@ const handleConvertPipelineRun = async () => {
 
         const itemX = item.transform[4];
         const itemY = item.transform[5];
-        const itemHeight = Math.abs(item.transform[0]); // Dynamic font size calculation
+        const itemHeight = Math.abs(item.transform[0]);
         
-        // Convert raw PDF point dimensions into standard Word Half-Points (approximate scaling factor)
+        // Convert raw PDF point dimensions into standard Word Half-Points
         const wordFontSize = Math.max(Math.min(Math.round(itemHeight * 2), 72), 18);
 
         if (currentLineY === null) {
@@ -123,7 +123,6 @@ const handleConvertPipelineRun = async () => {
           currentLineXEnd = itemX + item.width;
           lineRuns.push(new TextRun({ text: item.str, size: wordFontSize }));
         } 
-        // If the vertical deviation is significant, push the line to a new paragraph block
         else if (Math.abs(currentLineY - itemY) > 8) {
           if (lineRuns.length > 0) {
             docxParagraphs.push(new Paragraph({ children: lineRuns, spacing: { after: 120 } }));
@@ -132,9 +131,7 @@ const handleConvertPipelineRun = async () => {
           currentLineXEnd = itemX + item.width;
           lineRuns = [new TextRun({ text: item.str, size: wordFontSize })];
         } 
-        // Inline layout tracking
         else {
-          // Detect horizontal gaps or tab breaks between inline text segments
           const horizontalGap = currentLineXEnd ? itemX - currentLineXEnd : 0;
           const spacePrefix = (horizontalGap > itemHeight * 1.5) ? "    " : (lineRuns.length > 0 ? " " : "");
           
@@ -146,13 +143,11 @@ const handleConvertPipelineRun = async () => {
         }
       });
 
-      // Flush remaining tail buffers out of the page frame layout
       if (lineRuns.length > 0) {
         docxParagraphs.push(new Paragraph({ children: lineRuns, spacing: { after: 120 } }));
       }
 
       if (pageNum < pdfDoc.numPages) {
-        // Structural divider run line spacing break
         docxParagraphs.push(new Paragraph({ text: "", spacing: { after: 240 } }));
       }
     }
@@ -160,9 +155,14 @@ const handleConvertPipelineRun = async () => {
     if (docxParagraphs.length === 0) {
       docxParagraphs.push(
         new Paragraph({
-          children: [new TextRun({ text: "Empty document structure.", italic: true })]
-        }
-      ));
+          children: [
+            new TextRun({ 
+              text: "No selectable text layouts found in this document context loop.", 
+              italics: true // Fixed type error target here
+            })
+          ]
+        })
+      );
     }
 
     const doc = new Document({
