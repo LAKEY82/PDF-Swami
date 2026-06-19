@@ -7,6 +7,7 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Core theme hooks
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -40,6 +41,16 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+
+        // --- New Isolated Namespaced Tool Utility Palette ---
+        tool: {
+          bg: "hsl(var(--tool-bg))",
+          foreground: "hsl(var(--tool-foreground))",
+          card: "hsl(var(--tool-card))",
+          primary: "hsl(var(--tool-primary))",
+          secondary: "hsl(var(--tool-secondary))",
+          border: "hsl(var(--tool-border))",
+        }
       },
       borderRadius: {
         lg: "var(--radius)",

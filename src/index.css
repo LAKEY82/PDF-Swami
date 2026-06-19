@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    /* --- Existing Base System Theme (Zinc) --- */
     --background: 0 0% 100%;
     --foreground: 240 10% 3.9%;
 
@@ -33,6 +34,14 @@
     --ring: 240 5.9% 10%;
 
     --radius: 0.5rem;
+
+    /* ---  Tools Palette Variables --- */
+    --tool-bg: 210 20% 98%;           /* #F8FAFC */
+    --tool-foreground: 221 39% 11%;   /* #111827 */
+    --tool-card: 0 0% 100%;           /* #FFFFFF */
+    --tool-primary: 221 83% 53%;      /* #2563EB (Vivid Blue) */
+    --tool-secondary: 214 95% 93%;    /* #DBEAFE (Soft Blue) */
+    --tool-border: 214 32% 91%;       /* #CBD5E1 Subtler alternative */
   }
 
   .dark {
@@ -63,6 +72,14 @@
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
+
+    /* --- Dark Mode Fallbacks for Tool Variables (Optional adjustment) --- */
+    --tool-bg: 240 10% 3.9%;
+    --tool-foreground: 0 0% 98%;
+    --tool-card: 240 10% 5%;
+    --tool-primary: 221 83% 53%;
+    --tool-secondary: 240 3.7% 15.9%;
+    --tool-border: 240 3.7% 15.9%;
   }
 }
 
