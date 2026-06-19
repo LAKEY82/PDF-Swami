@@ -219,7 +219,7 @@ function Split() {
 
       <div className="max-w-6xl mx-auto relative z-10">
         
-        <Button 
+        {/* <Button 
           variant="ghost" 
           size="sm" 
           className="mb-6 group text-tool-foreground/60 hover:text-tool-foreground hover:bg-tool-border/30 transition-colors"
@@ -227,7 +227,7 @@ function Split() {
         >
           <ArrowLeft className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform text-tool-primary" />
           Back to tools
-        </Button>
+        </Button> */}
 
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight text-tool-foreground">Split PDF File</h1>

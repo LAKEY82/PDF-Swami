@@ -4,82 +4,84 @@
 
 @layer base {
   :root {
-    /* --- Existing Base System Theme (Zinc) --- */
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    /* --- Main UI Core Overrides --- */
+    --background: 210 20% 98%;        /* #F8FAFC - Soft slate background */
+    --foreground: 221 39% 11%;        /* #111827 - Dark text */
 
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;                /* #FFFFFF - White panels */
+    --card-foreground: 221 39% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
+    --popover-foreground: 221 39% 11%;
 
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
+    /* --- GLOBAL BUTTONS ALTERED TO DEEP ROYAL PURPLE (#5a108f) --- */
+    --primary: 275 80% 31%;           /* #5a108f - New Global button fill color */
+    --primary-foreground: 0 0% 100%;  /* #FFFFFF - Crisp white text inside buttons */
 
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
+    /* Fixed secondary hues to create the soft purple tint background for components */
+    --secondary: 240 68% 95%;         /* Very light tinted purple accent background layer */
+    --secondary-foreground: 275 80% 31%;/* #5a108f text accent mapping */
 
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
+    --muted: 214 32% 91%;
+    --muted-foreground: 215 16% 47%;
 
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
+    --accent: 240 68% 95%;
+    --accent-foreground: 275 80% 31%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --border: 214 32% 91%;            /* #CBD5E1 - Card borders */
+    --input: 214 32% 91%;
+    --ring: 275 80% 31%;              /* Ring focus matches theme */
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
 
-    /* ---  Tools Palette Variables --- */
+    /* --- Isolated Tool Palette Variables synced to Purple theme --- */
     --tool-bg: 210 20% 98%;           /* #F8FAFC */
     --tool-foreground: 221 39% 11%;   /* #111827 */
     --tool-card: 0 0% 100%;           /* #FFFFFF */
-    --tool-primary: 221 83% 53%;      /* #2563EB (Vivid Blue) */
-    --tool-secondary: 214 95% 93%;    /* #DBEAFE (Soft Blue) */
-    --tool-border: 214 32% 91%;       /* #CBD5E1 Subtler alternative */
+    --tool-primary: 275 80% 31%;      /* #5a108f */
+    --tool-secondary: 240 68% 94%;    /* FIXED: Soft light purple tint overlay for icon backgrounds */
+    --tool-border: 214 32% 91%;       /* #CBD5E1 */
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
+    --background: 224 71% 4%;
+    --foreground: 213 31% 91%;
 
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
+    --card: 224 71% 4%;
+    --card-foreground: 213 31% 91%;
 
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 224 71% 4%;
+    --popover-foreground: 213 31% 91%;
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
+    --primary: 275 80% 31%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 275 80% 15%;
+    --secondary-foreground: 213 31% 91%;
 
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
+    --muted: 222.2 47.4% 11.2%;
+    --muted-foreground: 215.4 16.3% 56.9%;
 
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 240 68% 25%;
+    --accent-foreground: 213 31% 91%;
 
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive-foreground: 213 31% 91%;
 
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --border: 222.2 47.4% 11.2%;
+    --input: 222.2 47.4% 11.2%;
+    --ring: 275 80% 31%;
 
-    /* --- Dark Mode Fallbacks for Tool Variables (Optional adjustment) --- */
-    --tool-bg: 240 10% 3.9%;
-    --tool-foreground: 0 0% 98%;
-    --tool-card: 240 10% 5%;
-    --tool-primary: 221 83% 53%;
-    --tool-secondary: 240 3.7% 15.9%;
-    --tool-border: 240 3.7% 15.9%;
+    /* --- Dark Mode Fallbacks for Tool Variables --- */
+    --tool-bg: 224 71% 4%;
+    --tool-foreground: 213 31% 91%;
+    --tool-card: 224 71% 6%;
+    --tool-primary: 240 68% 74%;
+    --tool-secondary: 240 68% 20%;   /* Dark mode relative soft opacity tint backing */
+    --tool-border: 222.2 47.4% 11.2%;
   }
 }
 

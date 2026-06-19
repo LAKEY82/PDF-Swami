@@ -117,76 +117,76 @@ function Merge() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-[#111827] px-4 py-12 md:py-16 relative overflow-hidden">
-      {/* Background Accent Gradient Glow */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[300px] bg-[#2563EB]/5 blur-[130px] rounded-full pointer-events-none" />
+    <div className="min-h-screen bg-tool-bg text-tool-foreground px-4 py-12 md:py-16 relative overflow-hidden">
+      {/* Background Accent Gradient Glow mapped to tool blue accent alpha channel */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[300px] bg-tool-primary/5 blur-[130px] rounded-full pointer-events-none" />
 
       <div className="max-w-4xl mx-auto relative z-10">
         {/* <Button 
           variant="ghost" 
           size="sm" 
-          className="mb-6 group text-[#111827]/60 hover:text-[#111827] hover:bg-[#CBD5E1]/30 transition-colors"
+          className="mb-6 group text-tool-foreground/60 hover:text-tool-foreground hover:bg-tool-border/30 transition-colors"
           onClick={() => navigate('/selection')}
         >
-          <ArrowLeft className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform text-[#2563EB]" />
+          <ArrowLeft className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform text-tool-primary" />
           Back to tools
         </Button> */}
 
         <div className="mb-8">
-          <h1 className="text-3xl font-bold tracking-tight text-[#111827]">Merge PDF Files</h1>
-          <p className="mt-1.5 text-[#111827]/70 text-sm">
+          <h1 className="text-3xl font-bold tracking-tight text-tool-foreground">Merge PDF Files</h1>
+          <p className="mt-1.5 text-tool-foreground/60 text-sm">
             Combine multiple PDF documents into a single professional file in seconds.
           </p>
         </div>
 
-        {/* Upload Slot Area */}
+        {/* Upload Slot Area adjusted to match split layout theme */}
         <div
           onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
           onDragLeave={() => setIsDraggingOver(false)}
           onDrop={(e) => { e.preventDefault(); setIsDraggingOver(false); if (e.dataTransfer.files) processNewFiles(e.dataTransfer.files); }}
           onClick={() => fileInputRef.current?.click()}
           className={cn(
-            "border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 bg-white text-center mb-8 shadow-sm",
-            isDraggingOver ? "border-[#2563EB] bg-[#DBEAFE]/30" : "border-[#CBD5E1] hover:border-[#2563EB]"
+            "border-2 border-dashed rounded-2xl p-10 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 bg-tool-card text-center mb-8 shadow-sm",
+            isDraggingOver ? "border-tool-primary bg-tool-secondary/40" : "border-tool-border hover:border-tool-primary"
           )}
         >
           <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple accept=".pdf" className="hidden" />
-          <div className="w-14 h-14 rounded-full bg-[#DBEAFE] flex items-center justify-center text-[#2563EB] mb-4 shadow-sm">
+          <div className="w-14 h-14 rounded-full bg-tool-secondary flex items-center justify-center text-tool-primary mb-4 shadow-sm">
             <UploadCloud className="w-7 h-7" />
           </div>
-          <p className="font-medium text-[#111827] text-base">Drag & drop PDF files here</p>
-          <p className="text-xs text-[#111827]/60 mt-1 mb-5">or select from your local device</p>
-          <Button type="button" size="sm" className="px-6 font-semibold shadow-md bg-[#111827] text-white hover:bg-[#111827]/90 border border-transparent">Select PDF files</Button>
+          <p className="font-semibold text-tool-foreground text-base tracking-tight">Drag & drop PDF files here</p>
+          <p className="text-xs text-tool-foreground/50 mt-1.5 mb-5">or select from your local device</p>
+          <Button type="button" size="sm" className="px-6 font-semibold shadow-sm bg-tool-primary text-white hover:bg-tool-primary/90 border border-transparent rounded-lg">Select PDF files</Button>
         </div>
 
         {/* Selected View List Layout */}
         {files.length > 0 && (
           <div className="space-y-4 animate-in fade-in-50 duration-200">
-            <div className="flex items-center justify-between border-b border-[#CBD5E1] pb-2 text-sm text-[#111827]/70">
+            <div className="flex items-center justify-between border-b border-tool-border pb-2 text-sm text-tool-foreground/70">
               <div className="flex items-center gap-2">
                 <span>Files to merge</span>
-                <span className="text-xs text-[#2563EB] bg-[#DBEAFE] px-2.5 py-0.5 rounded-full font-semibold">{files.length}</span>
+                <span className="text-xs text-tool-primary bg-tool-secondary px-2.5 py-0.5 rounded-full font-semibold">{files.length}</span>
               </div>
-              <span className="text-xs text-[#111827]/50 font-medium">Adjust order sequence using control triggers</span>
+              <span className="text-xs text-tool-foreground/40 font-medium">Adjust order sequence using control triggers</span>
             </div>
 
             <div className="space-y-2.5">
               {files.map((item, index) => (
-                <div key={item.id} className="flex items-center justify-between p-4 rounded-xl bg-white border border-[#CBD5E1] shadow-sm transition-all hover:border-[#CBD5E1]/80">
+                <div key={item.id} className="flex items-center justify-between p-4 rounded-xl bg-tool-card border border-tool-border shadow-sm transition-all hover:border-tool-foreground/60">
                   <div className="flex items-center gap-3 min-w-0">
                     {/* Control Shift Handles */}
                     <div className="flex flex-col gap-0.5">
                       <button 
                         disabled={index === 0}
                         onClick={(e) => { e.stopPropagation(); moveItem(index, 'up'); }}
-                        className="p-1 text-[#111827]/40 hover:text-[#2563EB] disabled:opacity-20 disabled:hover:text-[#111827]/40 transition-colors rounded-md hover:bg-[#F8FAFC]"
+                        className="p-1 text-tool-foreground/40 hover:text-tool-primary disabled:opacity-20 disabled:hover:text-tool-foreground/40 transition-colors rounded-md hover:bg-tool-bg"
                       >
                         <ArrowUp className="w-4 h-4" />
                       </button>
                       <button 
                         disabled={index === files.length - 1}
                         onClick={(e) => { e.stopPropagation(); moveItem(index, 'down'); }}
-                        className="p-1 text-[#111827]/40 hover:text-[#2563EB] disabled:opacity-20 disabled:hover:text-[#111827]/40 transition-colors rounded-md hover:bg-[#F8FAFC]"
+                        className="p-1 text-tool-foreground/40 hover:text-tool-primary disabled:opacity-20 disabled:hover:text-tool-foreground/40 transition-colors rounded-md hover:bg-tool-bg"
                       >
                         <ArrowDown className="w-4 h-4" />
                       </button>
@@ -198,15 +198,15 @@ function Merge() {
                     </div>
                     
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-[#111827] truncate max-w-sm md:max-w-lg">{item.name}</p>
-                      <p className="text-xs text-[#111827]/60 font-medium mt-0.5">{item.size} • {item.pageCount} {item.pageCount === 1 ? 'Page' : 'Pages'}</p>
+                      <p className="text-sm font-semibold text-tool-foreground truncate max-w-sm md:max-w-lg">{item.name}</p>
+                      <p className="text-xs text-tool-foreground/60 font-medium mt-0.5">{item.size} • {item.pageCount} {item.pageCount === 1 ? 'Page' : 'Pages'}</p>
                     </div>
                   </div>
 
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="w-8 h-8 text-[#111827]/50 hover:text-red-500 hover:bg-red-50 transition-colors rounded-lg"
+                    className="w-8 h-8 text-tool-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors rounded-lg"
                     onClick={(e) => { e.stopPropagation(); removeFile(item.id); }}
                   >
                     <X className="w-4 h-4" />
@@ -221,12 +221,12 @@ function Merge() {
                 size="lg" 
                 onClick={handleMergeAndDownload} 
                 disabled={isMerging} 
-                className="px-8 py-5 font-bold text-sm gap-2 bg-[#111827] text-white hover:bg-[#111827]/90 shadow-md transition-all focus:ring-2 focus:ring-[#2563EB]/40 disabled:bg-[#CBD5E1] disabled:text-[#111827]/40"
+                className="px-8 py-5 font-bold text-sm gap-2 bg-tool-primary text-white hover:bg-tool-primary/90 shadow-md transition-all focus:ring-2 focus:ring-tool-primary/40 disabled:bg-tool-border disabled:text-tool-foreground/40 flex items-center justify-center rounded-lg"
               >
                 {isMerging ? (
-                  <><Loader2 className="w-5 h-5 animate-spin text-[#2563EB]" />Merging Files...</>
+                  <><Loader2 className="w-5 h-5 animate-spin text-white" />Merging Files...</>
                 ) : (
-                  <><Combine className="w-5 h-5 text-[#2563EB]" />Merge and Download</>
+                  <><Combine className="w-5 h-5 text-white" />Merge and Download</>
                 )}
               </Button>
             </div>
