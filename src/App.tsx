@@ -5,6 +5,9 @@ import Selection from './Pages/Selection';
 import Merge from './tools/Merge'; 
 import Split from './tools/Split';
 import Compress from './tools/Compress';
+import Convert from './tools/Convert';
+import Organize from './tools/Organize';
+import WordConvert from './tools/WordConvert';
 
 function App() {
   return (
@@ -21,6 +24,9 @@ function App() {
           <Route path="/tools/merge" element={<Merge />} />
           <Route path="/tools/split" element={<Split />} />
           <Route path="/tools/compress" element={<Compress />} />
+          <Route path="/tools/convert-images" element={<Convert />} />
+          <Route path="/tools/organize" element={<Organize />} />
+          <Route path="/tools/pdf-to-word" element={<WordConvert />} />
         </Routes>
       </main>
     </BrowserRouter>

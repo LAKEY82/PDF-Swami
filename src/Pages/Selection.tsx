@@ -6,12 +6,12 @@ import {
   FileArchive, 
   FileImage, 
   Layers, 
-  RotateCw, 
-  FileX, 
+  // RotateCw, 
+  // FileX, 
   FileText,
-  ArrowLeft 
+  // ArrowLeft 
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+// import { Button } from '@/components/ui/button';
 
 // Structure for our PDF services
 interface ServiceItem {
@@ -64,22 +64,22 @@ const services: ServiceItem[] = [
     color: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
     path: '/tools/organize',
   },
-  {
-    id: 'rotate',
-    title: 'Rotate PDF',
-    description: 'Turn landscape or upside-down pages into perfectly oriented layouts.',
-    icon: RotateCw,
-    color: 'text-cyan-500 bg-cyan-500/10 border-cyan-500/20',
-    path: '/tools/rotate',
-  },
-  {
-    id: 'delete',
-    title: 'Delete Pages',
-    description: 'Instantly strip out unneeded or sensitive pages from your file.',
-    icon: FileX,
-    color: 'text-rose-500 bg-rose-500/10 border-rose-500/20',
-    path: '/tools/delete-pages',
-  },
+  // {
+  //   id: 'rotate',
+  //   title: 'Rotate PDF',
+  //   description: 'Turn landscape or upside-down pages into perfectly oriented layouts.',
+  //   icon: RotateCw,
+  //   color: 'text-cyan-500 bg-cyan-500/10 border-cyan-500/20',
+  //   path: '/tools/rotate',
+  // },
+  // {
+  //   id: 'delete',
+  //   title: 'Delete Pages',
+  //   description: 'Instantly strip out unneeded or sensitive pages from your file.',
+  //   icon: FileX,
+  //   color: 'text-rose-500 bg-rose-500/10 border-rose-500/20',
+  //   path: '/tools/delete-pages',
+  // },
   {
     id: 'pdf-to-word',
     title: 'PDF to Word Converter',
