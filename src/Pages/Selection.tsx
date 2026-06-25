@@ -6,12 +6,9 @@ import {
   FileArchive, 
   FileImage, 
   Layers, 
-  // RotateCw, 
-  // FileX, 
   FileText,
-  // ArrowLeft 
+  Sparkles // Unique icon for AI feature
 } from 'lucide-react';
-// import { Button } from '@/components/ui/button';
 
 // Structure for our PDF services
 interface ServiceItem {
@@ -21,6 +18,7 @@ interface ServiceItem {
   icon: React.ComponentType<{ className?: string }>;
   color: string;
   path: string;
+  badge?: string; // Added optional badge support
 }
 
 const services: ServiceItem[] = [
@@ -64,22 +62,6 @@ const services: ServiceItem[] = [
     color: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
     path: '/tools/organize',
   },
-  // {
-  //   id: 'rotate',
-  //   title: 'Rotate PDF',
-  //   description: 'Turn landscape or upside-down pages into perfectly oriented layouts.',
-  //   icon: RotateCw,
-  //   color: 'text-cyan-500 bg-cyan-500/10 border-cyan-500/20',
-  //   path: '/tools/rotate',
-  // },
-  // {
-  //   id: 'delete',
-  //   title: 'Delete Pages',
-  //   description: 'Instantly strip out unneeded or sensitive pages from your file.',
-  //   icon: FileX,
-  //   color: 'text-rose-500 bg-rose-500/10 border-rose-500/20',
-  //   path: '/tools/delete-pages',
-  // },
   {
     id: 'pdf-to-word',
     title: 'PDF to Word Converter',
@@ -87,6 +69,15 @@ const services: ServiceItem[] = [
     icon: FileText,
     color: 'text-indigo-500 bg-indigo-500/10 border-indigo-500/20',
     path: '/tools/pdf-to-word',
+  },
+  {
+    id: 'ai-editdetector',
+    title: 'AI Edit Detector',
+    description: 'Identify and highlight potential edits or inconsistencies in your PDF documents.',
+    icon: Sparkles, // Changed to Sparkles icon
+    color: 'text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20', // Custom unique color theme
+    path: '/tools/ai-editdetector',
+    badge: 'Beta', // Added badge property
   },
 ];
 
@@ -100,17 +91,6 @@ function Selection() {
 
       <div className="max-w-6xl mx-auto relative z-10">
         
-        {/* Back navigation option */}
-        {/* <Button 
-          variant="ghost" 
-          size="sm" 
-          className="mb-8 group text-muted-foreground hover:text-foreground transition-colors"
-          onClick={() => navigate('/')}
-        >
-          <ArrowLeft className="w-4 h-4 mr-2 group-hover:-translate-x-1 transition-transform" />
-          Back to home
-        </Button> */}
-
         {/* Header Block */}
         <div className="text-center md:text-left mb-12 md:mb-16">
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-b from-foreground to-foreground/80 text-transparent bg-clip-text">
@@ -131,6 +111,13 @@ function Selection() {
                 onClick={() => navigate(service.path)}
                 className="group relative flex flex-col text-left p-6 rounded-2xl bg-card/40 backdrop-blur-sm border border-border/50 hover:border-border hover:bg-card transition-all duration-300 shadow-sm hover:shadow-md"
               >
+                {/* Dynamic Beta Notification Badge */}
+                {service.badge && (
+                  <span className="absolute -top-2.5 right-4 z-20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white bg-fuchsia-600 rounded-full shadow-sm border border-fuchsia-400">
+                    {service.badge}
+                  </span>
+                )}
+
                 {/* Accent Highlight Wrapper */}
                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${service.color} transition-transform duration-300 group-hover:scale-105`}>
                   <IconComponent className="w-6 h-6" />

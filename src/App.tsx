@@ -8,6 +8,7 @@ import Compress from './tools/Compress';
 import Convert from './tools/Convert';
 import Organize from './tools/Organize';
 import WordConvert from './tools/WordConvert';
+import AIEditDetector from './tools/AiDetector';
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
           <Route path="/tools/convert-images" element={<Convert />} />
           <Route path="/tools/organize" element={<Organize />} />
           <Route path="/tools/pdf-to-word" element={<WordConvert />} />
+          <Route path="/tools/ai-editdetector" element={<AIEditDetector />} />
         </Routes>
       </main>
     </BrowserRouter>
