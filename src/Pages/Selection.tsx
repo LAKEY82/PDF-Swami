@@ -7,7 +7,8 @@ import {
   FileImage, 
   Layers, 
   FileText,
-  Sparkles // Unique icon for AI feature
+  Sparkles, // Unique icon for AI feature
+  PenLine
 } from 'lucide-react';
 
 // Structure for our PDF services
@@ -78,6 +79,15 @@ const services: ServiceItem[] = [
     color: 'text-fuchsia-500 bg-fuchsia-500/10 border-fuchsia-500/20', // Custom unique color theme
     path: '/tools/ai-editdetector',
     badge: 'Beta', // Added badge property
+  },
+  {
+    id: 'edit-text',
+    title: 'Edit PDF Text',
+    description: 'Click directly on text in your PDF to detect its font and rewrite it in place.',
+    icon: PenLine,
+    color: 'text-cyan-500 bg-cyan-500/10 border-cyan-500/20',
+    path: '/tools/edit-text',
+    badge: 'Beta',
   },
 ];
 

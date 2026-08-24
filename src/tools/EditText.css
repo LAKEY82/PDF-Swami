@@ -1,0 +1,71 @@
+/*
+  Minimal, scoped reimplementation of pdf.js's TextLayer stylesheet.
+  We intentionally avoid importing pdfjs-dist/web/pdf_viewer.css wholesale
+  (it ships the entire viewer UI - toolbars, dialogs, etc. - under generic
+  class names that would leak into the rest of the app). This covers only
+  what the low-level `TextLayer` render class needs to lay spans out
+  correctly, under a namespaced class so nothing else can collide with it.
+*/
+
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+  /* Must be set to the actual render scale (see renderPage) - pdf.js
+     stores each span's font-height in raw, unscaled PDF points and
+     expects this factor to bring it up to on-screen CSS pixels. Left at
+     1 it silently renders everything ~1/scale too small, which is what
+     made the invisible hit-testing layer disagree with the visible
+     canvas glyphs. */
+  --total-scale-factor: 1;
+  --min-font-size: 1;
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  z-index: 2;
+  /* Spans are read as data (bounding boxes / font info) for whatever the
+     marquee selection covers - they are not individually interactive, so
+     mouse events must pass through to the page container beneath. */
+  pointer-events: none;
+}
+
+.pdf-text-layer span,
+.pdf-text-layer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0% 0%;
+}
+
+.pdf-text-layer > *:not(.markedContent),
+.pdf-text-layer .markedContent span {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--total-scale-factor) * var(--min-font-size) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-text-layer .markedContent {
+  display: contents;
+}
+
+.pdf-text-layer ::selection {
+  background: transparent;
+}
+
+.pdf-highlight-box {
+  position: absolute;
+  pointer-events: none;
+  border: 1.5px solid hsl(var(--tool-primary));
+  background: hsl(var(--tool-primary) / 0.12);
+  border-radius: 2px;
+  z-index: 3;
+}
+
+/* Live drag in progress: dashed marquee, like a snipping-tool selection. */
+.pdf-highlight-box[data-active="true"] {
+  border-style: dashed;
+  background: hsl(var(--tool-primary) / 0.08);
+}
