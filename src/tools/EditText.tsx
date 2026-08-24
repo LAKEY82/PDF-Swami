@@ -19,7 +19,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { matchStandardFont, describeStandardFont } from '@/lib/pdfFontMatch';
-import './EditText.css';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
@@ -145,7 +144,8 @@ function EditText() {
       // raw, unscaled PDF-point values internally, and expects this
       // variable to bring them up to the current on-screen scale - it
       // isn't optional, and leaving it at a fixed value silently renders
-      // every span at the wrong size (see EditText.css for detail).
+      // every span at the wrong size (see the Tailwind classes on
+      // textLayerRef below for the formula that consumes it).
       textLayerDiv.style.setProperty('--total-scale-factor', String(atScale));
       textLayerDiv.style.setProperty('--scale-round-x', '1px');
       textLayerDiv.style.setProperty('--scale-round-y', '1px');
@@ -157,10 +157,36 @@ function EditText() {
       const layer = new TextLayer({ textContentSource: rawTextContent, container: textLayerDiv, viewport });
       await layer.render();
 
+      // pdf.js wraps tagged/marked-content runs in its own <span
+      // class="markedContent"> element with a hardcoded class name we don't
+      // control, so it can't be authored with a className prop - it has to
+      // be reached and classed after the fact, same as any element a
+      // third-party library injects into the DOM.
+      textLayerDiv.querySelectorAll<HTMLElement>('.markedContent').forEach((el) => {
+        el.classList.add('contents');
+      });
+
       const divs = layer.textDivs;
       const records: SpanRecord[] = [];
 
       divs.forEach((div, index) => {
+        const span = div as HTMLSpanElement;
+        // Every text span needs pdf.js's own positioning formula (font-size
+        // and transform driven by CSS custom properties it sets per span),
+        // reimplemented as Tailwind arbitrary-value/property utilities
+        // instead of the removed stylesheet rule.
+        span.classList.add(
+          'text-transparent',
+          'absolute',
+          'whitespace-pre',
+          'origin-top-left',
+          '[--font-height:0]',
+          '[--scale-x:1]',
+          '[--rotate:0deg]',
+          'text-[length:calc(var(--total-scale-factor)*var(--min-font-size)*var(--font-height))]',
+          '[transform:rotate(var(--rotate))_scaleX(var(--scale-x))_scale(var(--min-font-size-inv))]',
+        );
+
         const item = textItems[index];
         if (!item || !item.str.trim()) return;
 
@@ -180,7 +206,7 @@ function EditText() {
         const italic = /italic|oblique/.test(probe);
 
         records.push({
-          element: div as HTMLSpanElement,
+          element: span,
           item,
           fontFamily: rawFamily,
           bold,
@@ -606,8 +632,18 @@ function EditText() {
                   className="relative inline-block shadow-md leading-none cursor-crosshair select-none"
                 >
                   <canvas ref={canvasRef} className="block" />
-                  <div ref={textLayerRef} className="pdf-text-layer" />
-                  <div ref={highlightRef} className="pdf-highlight-box" style={{ opacity: 0 }} />
+                  <div
+                    ref={textLayerRef}
+                    // "pdf-text-layer" carries no CSS of its own (styling is
+                    // all Tailwind utilities below) - it's kept purely as a
+                    // stable selector for devtools/tests.
+                    className="pdf-text-layer absolute inset-0 overflow-clip leading-none text-left origin-top-left z-[2] pointer-events-none selection:bg-transparent [--total-scale-factor:1] [--min-font-size:1] [--min-font-size-inv:calc(1/var(--min-font-size))]"
+                  />
+                  <div
+                    ref={highlightRef}
+                    className="pdf-highlight-box absolute pointer-events-none border-[1.5px] rounded-sm z-[3] border-tool-primary bg-tool-primary/[0.12] data-[active=true]:border-dashed data-[active=true]:bg-tool-primary/[0.08]"
+                    style={{ opacity: 0 }}
+                  />
                 </div>
               </div>
 
