@@ -3,6 +3,7 @@ import { motion, useMotionValue, useSpring } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
+import swamiLogo from '@/assets/swami.png';
 
 // Interface for the props of each individual icon.
 interface IconProps {
@@ -157,7 +158,7 @@ const FloatingIconsHero = React.forwardRef<
           {subtitle}
         </p>
         <img
-          src="/src/assets/swami.png"
+          src={swamiLogo}
           alt="PDF Swami"
           className="mx-auto mt-8 w-32 h-32 object-contain"
         />

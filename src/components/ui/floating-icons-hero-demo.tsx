@@ -314,12 +314,6 @@ export default function FloatingIconsHeroDemo() {
       ctaText="Start For Free"
       ctaHref="#"
       icons={demoIcons}
-    >
-       <img
-        src="/src/assets/swami.png"
-        alt="PDF Swami"
-        className="mx-auto mt-6 w-32 h-32 object-contain"
-      />
-</FloatingIconsHero>
+    />
   );
 }
