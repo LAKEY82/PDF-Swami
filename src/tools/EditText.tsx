@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { TextLayer } from 'pdfjs-dist';
+import { TextLayer, OPS } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PageViewport } from 'pdfjs-dist';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, type PDFFont } from 'pdf-lib';
 import {
   UploadCloud,
   Loader2,
@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Download,
   Info,
+  Plus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -63,19 +64,220 @@ interface PdfRect {
   height: number;
 }
 
+// A page text run that sits below the edited paragraph, captured with its
+// own original PDF-space position/font/size so it can be redrawn shifted
+// down if the edit makes the paragraph grow taller than it was.
+interface BelowSpan {
+  text: string;
+  x: number;
+  y: number;
+  size: number;
+  fontFamily: string;
+  bold: boolean;
+  italic: boolean;
+}
+
+// A simple straight rule line detected in the page's own drawing
+// operations (table borders, underlines, divider rules) - these are
+// vector graphics, not text, so pdf.js's text extraction never sees them.
+// Redacting a region only ever re-detects and redraws text, so without
+// capturing these separately, any rule line inside a whited-out region
+// is simply gone - it isn't text that could be "missed", it's a different
+// kind of content the redaction step didn't know to preserve at all.
+interface RuleLine {
+  x0: number;
+  x1: number;
+  y: number;
+  thickness: number;
+  color: { r: number; g: number; b: number };
+}
+
+// A small filled vector shape - the other common way PDF generators draw
+// bullet-list markers (Word, PowerPoint, Google Docs, Canva routinely
+// draw a tiny filled circle/square rather than an actual "•" character,
+// for precise control over its size and vertical alignment). Same
+// underlying problem as RuleLine: it's not text, so redacting a region
+// erases it with nothing to notice or redraw it. Detected as a filled
+// shape whose bounding box is small and roughly square, which cleanly
+// distinguishes it from a rule (thin and wide) or ordinary text.
+interface BulletDot {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: { r: number; g: number; b: number };
+}
+
+// 'paragraph': merge every line into one flowing, word-wrapped block.
+// 'line': just the single line the drag touches.
+// 'points': keep each line the drag touches as its own separately
+// editable/addable/removable item (for bullet lists, table cells, etc.)
+// instead of merging them into one string.
+type SelectionMode = 'paragraph' | 'points' | 'line';
+
 interface SelectedRegion {
   pageNumber: number;
   pdfRect: PdfRect;
   rawFontFamily: string;
   detectedFontFamily: string;
-  detectedText: string;
+  mode: SelectionMode;
+  items: string[];
+  lineHeightPt: number;
+  belowSpans: BelowSpan[];
+  belowRules: RuleLine[];
+  belowDots: BulletDot[];
 }
 
 const ZOOM_LEVELS = [1, 1.5, 2];
 const MIN_MARQUEE_PX = 6;
+const SELECTION_MODES: { value: SelectionMode; label: string }[] = [
+  { value: 'paragraph', label: 'Paragraph' },
+  { value: 'points', label: 'Points' },
+  { value: 'line', label: 'Line' },
+];
+
+// If every existing item starts with the same bullet-like marker (•, -, *,
+// etc.), a newly added point is prefilled with it so the list stays
+// visually consistent without the user having to retype it.
+function guessBulletPrefix(items: string[]): string {
+  const nonEmpty = items.filter((t) => t.trim().length > 0);
+  if (nonEmpty.length < 1) return '';
+  const match = nonEmpty[0].match(/^\s*[•\-*◦▪‣·]\s+/);
+  if (!match) return '';
+  const prefix = match[0];
+  return nonEmpty.every((t) => t.startsWith(prefix)) ? prefix : '';
+}
 
 function isTextItem(item: PdfTextItem | { type: string }): item is PdfTextItem {
   return (item as PdfTextItem).str !== undefined;
+}
+
+// PDF 2x3 affine matrix as [a,b,c,d,e,f]: x' = a*x + c*y + e, y' = b*x + d*y + f.
+type Mat = [number, number, number, number, number, number];
+const IDENTITY_MATRIX: Mat = [1, 0, 0, 1, 0, 0];
+function multiplyMatrix(m2: Mat, m1: Mat): Mat {
+  // Applies m2 first, then m1 - matches the PDF `cm` operator's semantics
+  // for prepending a transform onto the current one.
+  return [
+    m2[0] * m1[0] + m2[1] * m1[2],
+    m2[0] * m1[1] + m2[1] * m1[3],
+    m2[2] * m1[0] + m2[3] * m1[2],
+    m2[2] * m1[1] + m2[3] * m1[3],
+    m2[4] * m1[0] + m2[5] * m1[2] + m1[4],
+    m2[4] * m1[1] + m2[5] * m1[3] + m1[5],
+  ];
+}
+function applyMatrix(m: Mat, x: number, y: number): [number, number] {
+  return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+}
+
+const STROKE_PAINT_OPS = new Set([OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+
+// Walks a page's raw drawing operations looking for two kinds of small
+// vector marks that pdf.js's text extraction has no way to see:
+//
+// - Rule lines (table borders, underlines, divider rules): an actual
+//   stroked line, or a very thin filled rectangle used to fake one.
+//   Deliberately narrow in scope to near-horizontal, axis-aligned rules -
+//   curves, rotated content, and vertical dividers are left alone (a
+//   vertical divider would need to change LENGTH rather than just shift
+//   when content below it moves, a different problem than this tool
+//   currently solves).
+// - Bullet dots: many PDF generators (Word, PowerPoint, Google Docs,
+//   Canva) draw list bullets as a tiny filled circle/square rather than
+//   an actual "•" character. Distinguished from a rule by shape - small
+//   and roughly square/round instead of thin and wide - so the two
+//   categories never overlap.
+function extractVectorMarks(fnArray: number[], argsArray: unknown[][]): { rules: RuleLine[]; dots: BulletDot[] } {
+  const rules: RuleLine[] = [];
+  const dots: BulletDot[] = [];
+  const matrixStack: Mat[] = [];
+  let ctm: Mat = IDENTITY_MATRIX;
+  let strokeColor = { r: 0, g: 0, b: 0 };
+  let fillColor = { r: 0, g: 0, b: 0 };
+  let lineWidth = 1;
+
+  const toColor = (args: unknown[]): { r: number; g: number; b: number } => {
+    // pdf.js's operator list represents colors as a ready-to-use CSS hex
+    // string (it feeds its own canvas renderer's fillStyle/strokeStyle
+    // directly), not raw numeric channels.
+    const first = args[0];
+    if (typeof first === 'string' && first.startsWith('#') && first.length >= 7) {
+      const r = parseInt(first.slice(1, 3), 16) / 255;
+      const g = parseInt(first.slice(3, 5), 16) / 255;
+      const b = parseInt(first.slice(5, 7), 16) / 255;
+      if (!Number.isNaN(r) && !Number.isNaN(g) && !Number.isNaN(b)) return { r, g, b };
+    }
+    if (args.length >= 3 && typeof args[0] === 'number') {
+      return { r: Number(args[0]), g: Number(args[1]), b: Number(args[2]) };
+    }
+    if (args.length === 1 && typeof args[0] === 'number') {
+      const gray = Number(args[0]);
+      return { r: gray, g: gray, b: gray };
+    }
+    return { r: 0, g: 0, b: 0 };
+  };
+
+  for (let i = 0; i < fnArray.length; i++) {
+    const op = fnArray[i];
+    const args = argsArray[i];
+
+    if (op === OPS.save) {
+      matrixStack.push(ctm);
+    } else if (op === OPS.restore) {
+      ctm = matrixStack.pop() ?? IDENTITY_MATRIX;
+    } else if (op === OPS.transform) {
+      const m = args as number[];
+      ctm = multiplyMatrix([m[0], m[1], m[2], m[3], m[4], m[5]], ctm);
+    } else if (op === OPS.setLineWidth) {
+      lineWidth = Number((args as number[])[0]);
+    } else if (op === OPS.setStrokeRGBColor || op === OPS.setStrokeGray || op === OPS.setStrokeColorN || op === OPS.setStrokeColor) {
+      strokeColor = toColor(args as unknown[]);
+    } else if (op === OPS.setFillRGBColor || op === OPS.setFillGray || op === OPS.setFillColorN || op === OPS.setFillColor) {
+      fillColor = toColor(args as unknown[]);
+    } else if (op === OPS.constructPath) {
+      const [paintOp, , bbox] = args as [number, unknown, ArrayLike<number>];
+      if (!bbox || bbox.length < 4) continue;
+      const corners: [number, number][] = [
+        applyMatrix(ctm, bbox[0], bbox[1]),
+        applyMatrix(ctm, bbox[2], bbox[1]),
+        applyMatrix(ctm, bbox[0], bbox[3]),
+        applyMatrix(ctm, bbox[2], bbox[3]),
+      ];
+      const xs = corners.map((c) => c[0]);
+      const ys = corners.map((c) => c[1]);
+      const x0 = Math.min(...xs);
+      const x1 = Math.max(...xs);
+      const y0 = Math.min(...ys);
+      const y1 = Math.max(...ys);
+      const w = x1 - x0;
+      const h = y1 - y0;
+      // A real rule: thin (near-zero height, or a hairline fill) and wide
+      // enough not to be a stray dot or a text-adjacent artifact.
+      if (h <= 2.5 && w >= 8) {
+        const scale = Math.hypot(ctm[0], ctm[1]);
+        rules.push({
+          x0,
+          x1,
+          y: (y0 + y1) / 2,
+          thickness: Math.max(h, lineWidth * scale, 0.5),
+          color: STROKE_PAINT_OPS.has(paintOp) ? strokeColor : fillColor,
+        });
+      } else if (w >= 1.2 && w <= 9 && h >= 1.2 && h <= 9 && w / h >= 0.4 && w / h <= 2.5) {
+        // Small and roughly square/round - a bullet marker, not a rule or
+        // stray text-rendering artifact.
+        dots.push({
+          x: (x0 + x1) / 2,
+          y: (y0 + y1) / 2,
+          width: w,
+          height: h,
+          color: STROKE_PAINT_OPS.has(paintOp) ? strokeColor : fillColor,
+        });
+      }
+    }
+  }
+
+  return { rules, dots };
 }
 
 function EditText() {
@@ -87,6 +289,22 @@ function EditText() {
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const viewportRef = useRef<PageViewport | null>(null);
   const spansRef = useRef<SpanRecord[]>([]);
+  const rulesRef = useRef<RuleLine[]>([]);
+  // Unlike text spans, rules carry no unique identity beyond their own
+  // (x0, x1, y) - and a table's borders routinely share the exact same
+  // (x0, x1) span across many different rows at different y, so "same
+  // key recurs, keep the last" can't safely tell a ghost duplicate apart
+  // from a second, entirely legitimate row's border. So rules are
+  // extracted from the PDF's operators only ONCE per page, the first
+  // time it's genuinely opened - after that, applyEdit maintains this
+  // cache directly (removing rules an edit's own block superseded,
+  // shifting the ones below it), so it never needs to be re-derived from
+  // the ever-more-ghost-laden accumulated PDF bytes.
+  const rulesCacheRef = useRef<Map<number, RuleLine[]>>(new Map());
+  const dotsRef = useRef<BulletDot[]>([]);
+  // Same reasoning and same cache-once-per-page treatment as rulesCacheRef
+  // - see BulletDot for what these are and why they need it.
+  const dotsCacheRef = useRef<Map<number, BulletDot[]>>(new Map());
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [currentBytes, setCurrentBytes] = useState<Uint8Array | null>(null);
@@ -101,8 +319,9 @@ function EditText() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [editCount, setEditCount] = useState(0);
 
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>('paragraph');
   const [selected, setSelected] = useState<SelectedRegion | null>(null);
-  const [draftText, setDraftText] = useState('');
+  const [draftItems, setDraftItems] = useState<string[]>(['']);
   const [overrideBold, setOverrideBold] = useState(false);
   const [overrideItalic, setOverrideItalic] = useState(false);
   const [overrideFontSize, setOverrideFontSize] = useState(12);
@@ -153,6 +372,27 @@ function EditText() {
       const rawTextContent = await page.getTextContent();
       const textContent = rawTextContent as unknown as PdfTextContent;
       const textItems = textContent.items.filter(isTextItem);
+
+      // Table borders and bullet dots are vector graphics, not text -
+      // getTextContent() never sees them, so they need their own pass
+      // over the page's raw drawing operations (see extractVectorMarks)
+      // to be captured and later preserved when a redaction whites out
+      // the region they're sitting in. Only done once per page - see
+      // rulesCacheRef/dotsCacheRef for why re-deriving this after this
+      // tool's own edits would reintroduce the exact ghost-duplication
+      // problem they exist to avoid.
+      let pageRules = rulesCacheRef.current.get(pageNum);
+      let pageDots = dotsCacheRef.current.get(pageNum);
+      if (!pageRules || !pageDots) {
+        const opList = await page.getOperatorList();
+        const marks = extractVectorMarks(opList.fnArray, opList.argsArray);
+        pageRules = marks.rules;
+        pageDots = marks.dots;
+        rulesCacheRef.current.set(pageNum, pageRules);
+        dotsCacheRef.current.set(pageNum, pageDots);
+      }
+      rulesRef.current = pageRules;
+      dotsRef.current = pageDots;
 
       const layer = new TextLayer({ textContentSource: rawTextContent, container: textLayerDiv, viewport });
       await layer.render();
@@ -214,7 +454,25 @@ function EditText() {
         });
       });
 
-      spansRef.current = records;
+      // A whiteout only ever visually covers old content - it can't
+      // remove the underlying text-showing operators, so getTextContent()
+      // still reports them. After this tool's own edits accumulate, the
+      // SAME text at the SAME x can appear more than once: an original,
+      // now-hidden copy plus whichever redraw(s) actually shifted it into
+      // view. Since our own redraws always preserve x exactly (only y
+      // moves), a duplicate (text, x) pair is - for this tool's own
+      // output - reliably a stale/hidden ghost, not a coincidence. Keep
+      // only the last (most recently drawn, and therefore genuinely
+      // visible) occurrence; otherwise a later edit's "shift everything
+      // below" pass would resurrect a hidden ghost as new opaque text at
+      // yet another position, compounding with every subsequent edit.
+      const lastIndexForKey = new Map<string, number>();
+      records.forEach((r, idx) => {
+        lastIndexForKey.set(`${r.item.str}|${Math.round(r.item.transform[4])}`, idx);
+      });
+      spansRef.current = records.filter(
+        (r, idx) => lastIndexForKey.get(`${r.item.str}|${Math.round(r.item.transform[4])}`) === idx,
+      );
     } finally {
       setIsRenderingPage(false);
     }
@@ -244,6 +502,8 @@ function EditText() {
     setErrorMessage(null);
     setSelected(null);
     setEditCount(0);
+    rulesCacheRef.current = new Map();
+    dotsCacheRef.current = new Map();
 
     try {
       const buffer = await file.arrayBuffer();
@@ -281,101 +541,244 @@ function EditText() {
 
   // Turns a user-drawn screen rectangle into a PDF-point rectangle (via
   // pdf.js's own inverse viewport transform, so it accounts for scale/zoom
-  // exactly) and pre-fills the edit panel with whatever text runs the box
-  // covers, so a user can see - and correct - what was detected.
+  // exactly) and pre-fills the edit panel with whatever text the box
+  // touches. What counts as "the edit unit" depends on selectionMode:
+  //
+  // - line: just the single line closest to the drag.
+  // - paragraph / points: every line the drag box actually covers - no
+  //   auto-expansion beyond the drag. An earlier version of paragraph
+  //   mode tried to guess the rest of the paragraph from line spacing
+  //   alone, expanding outward while gaps looked "consistent enough" -
+  //   but that guess had no reliable way to tell a genuine paragraph
+  //   continuation apart from an unrelated adjacent block (a resume's
+  //   job-title/date header sitting directly above its description, a
+  //   table's next row, a list's items) whenever the gap between them
+  //   wasn't clearly larger than normal line spacing. Tying the selection
+  //   to the drag itself means what ends up in the edit box is always
+  //   exactly what was marked. The only remaining difference between the
+  //   two modes is how the selected lines are edited: paragraph merges
+  //   them into one flowing, word-wrapped string; points keeps each line
+  //   as its own separately addable/removable item.
+  //
+  // Either way, if the redrawn block ends up taller or shorter than the
+  // original, every other text run below it on the page is redrawn
+  // shifted by the difference (see applyEdit / belowSpans), so edits don't
+  // overlap - or leave a gap behind - whatever came after them.
   const finalizeMarquee = (clientLeft: number, clientTop: number, width: number, height: number) => {
     const canvas = canvasRef.current;
     const viewport = viewportRef.current;
     if (!canvas || !viewport) return;
 
     const canvasRect = canvas.getBoundingClientRect();
-    const cx0 = clientLeft - canvasRect.left;
-    const cy0 = clientTop - canvasRect.top;
-    const cx1 = cx0 + width;
-    const cy1 = cy0 + height;
-
-    const [px0, py0] = viewport.convertToPdfPoint(cx0, cy0);
-    const [px1, py1] = viewport.convertToPdfPoint(cx1, cy1);
-    const pdfRect: PdfRect = {
-      x: Math.min(px0, px1),
-      y: Math.min(py0, py1),
-      width: Math.abs(px1 - px0),
-      height: Math.abs(py1 - py0),
+    const toPdfRect = (left: number, top: number, right: number, bottom: number): PdfRect => {
+      const [px0, py0] = viewport.convertToPdfPoint(left - canvasRect.left, top - canvasRect.top);
+      const [px1, py1] = viewport.convertToPdfPoint(right - canvasRect.left, bottom - canvasRect.top);
+      return {
+        x: Math.min(px0, px1),
+        y: Math.min(py0, py1),
+        width: Math.abs(px1 - px0),
+        height: Math.abs(py1 - py0),
+      };
     };
 
-    // A single PDF text-showing operator can cover a whole line ("Hello
-    // World Test" as one run) - if the drawn box only covers part of that
-    // run's width, including the run's full string would report text the
-    // box doesn't actually reach. Clip each matched run to the fraction of
-    // its own width that's inside the box (assuming roughly uniform glyph
-    // width - an approximation, not exact per-character measurement, but
-    // far closer to "what's under the box" than an all-or-nothing match).
-    const dragRight = clientLeft + width;
     const dragBottom = clientTop + height;
-    const MIN_OVERLAP_FRACTION = 0.15;
+    const dragMidY = (clientTop + dragBottom) / 2;
+    const dragRight = clientLeft + width;
 
-    interface Match {
-      record: SpanRecord;
-      clippedText: string;
-      rect: DOMRect;
+    // Cluster spans into visual lines (top-to-bottom, left-to-right within
+    // each line). Restricted to spans that horizontally overlap the drag
+    // (with slack for an imprecise drag) so a table row's OTHER columns -
+    // sharing the same y-position as the column actually dragged over,
+    // but nowhere near it horizontally - don't get pulled into the same
+    // "line" just because line-clustering only looked at vertical
+    // position.
+    const HORIZONTAL_SLACK_PX = 30;
+    interface LineGroup {
+      spans: { record: SpanRecord; rect: DOMRect }[];
+      top: number;
+      bottom: number;
+      left: number;
+      right: number;
+      midY: number;
+    }
+    const lines: LineGroup[] = [];
+    spansRef.current
+      .map((record) => ({ record, rect: record.element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.right >= clientLeft - HORIZONTAL_SLACK_PX && rect.left <= dragRight + HORIZONTAL_SLACK_PX)
+      .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left)
+      .forEach(({ record, rect }) => {
+        const midY = rect.top + rect.height / 2;
+        const line = lines.find((l) => Math.abs(l.midY - midY) <= rect.height * 0.5);
+        if (line) {
+          line.spans.push({ record, rect });
+          line.top = Math.min(line.top, rect.top);
+          line.bottom = Math.max(line.bottom, rect.bottom);
+          line.left = Math.min(line.left, rect.left);
+          line.right = Math.max(line.right, rect.right);
+          line.midY = (line.top + line.bottom) / 2;
+        } else {
+          lines.push({ spans: [{ record, rect }], top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, midY });
+        }
+      });
+    lines.sort((a, b) => a.top - b.top);
+    lines.forEach((l) => l.spans.sort((a, b) => a.rect.left - b.rect.left));
+
+    const lineText = (line: LineGroup): string => {
+      let text = '';
+      line.spans.forEach(({ record, rect }, i) => {
+        if (i > 0) {
+          const prevRect = line.spans[i - 1].rect;
+          const gap = rect.left - prevRect.right;
+          // A small gap is almost certainly a mid-word split (kerning-
+          // driven), not a real space between words.
+          if (gap > prevRect.height * 0.15) text += ' ';
+        }
+        text += record.item.str;
+      });
+      return text;
+    };
+
+    // Find the line closest to the drag's vertical center, if the drag
+    // touches one vertically at all (horizontal position doesn't matter).
+    let touchedIdx = -1;
+    let touchedDist = Infinity;
+    lines.forEach((line, idx) => {
+      if (line.midY < clientTop || line.midY > dragBottom) return;
+      const dist = Math.abs(line.midY - dragMidY);
+      if (dist < touchedDist) {
+        touchedDist = dist;
+        touchedIdx = idx;
+      }
+    });
+
+    // What counts as "selected" is always exactly what the drag box
+    // vertically covers - line mode narrows that to just the closest
+    // line. Paragraph mode used to expand outward from the touched line
+    // on its own (guessing where a paragraph "really" started/ended from
+    // line-spacing alone), but that guess had no reliable way to
+    // distinguish a genuine paragraph continuation from an unrelated
+    // adjacent block - a resume's job-title/date header sitting directly
+    // above its description, a table's next row, etc. - whenever the gap
+    // between them wasn't clearly larger than normal line spacing. Tying
+    // the selection to the drag itself, the same way Points mode already
+    // works, means what ends up in the edit box is always exactly what
+    // was marked - Paragraph mode's only remaining job is merging those
+    // lines into one flowing, word-wrapped string instead of keeping them
+    // as separate items.
+    let selectedLines: LineGroup[];
+    if (touchedIdx < 0) {
+      selectedLines = [];
+    } else if (selectionMode === 'line') {
+      selectedLines = [lines[touchedIdx]];
+    } else {
+      selectedLines = lines.filter((l) => l.midY >= clientTop && l.midY <= dragBottom);
     }
 
-    const matches: Match[] = [];
-    spansRef.current.forEach((record) => {
-      const r = record.element.getBoundingClientRect();
-      const midY = r.top + r.height / 2;
-      if (r.width <= 0 || midY < clientTop || midY > dragBottom) return;
+    let pdfRect: PdfRect;
+    let items: string[] = [''];
+    let rawFontFamily = 'sans-serif';
+    let bold = false;
+    let italic = false;
+    let detectedFontFamily = 'sans-serif';
+    let avgSizePt: number;
+    let lineHeightPt: number;
+    let belowSpans: BelowSpan[] = [];
+    let belowRules: RuleLine[] = [];
+    let belowDots: BulletDot[] = [];
 
-      const clippedLeft = Math.max(r.left, clientLeft);
-      const clippedRight = Math.min(r.right, dragRight);
-      const overlapWidth = clippedRight - clippedLeft;
-      if (overlapWidth <= 0) return;
+    if (selectedLines.length > 0) {
+      items =
+        selectionMode === 'paragraph'
+          ? [selectedLines.map(lineText).join(' ').replace(/\s+/g, ' ').trim()]
+          : selectedLines.map(lineText);
 
-      const overlapFraction = overlapWidth / r.width;
-      if (overlapFraction < MIN_OVERLAP_FRACTION) return;
+      const left = Math.min(...selectedLines.map((l) => l.left));
+      const right = Math.max(...selectedLines.map((l) => l.right));
+      const top = Math.min(...selectedLines.map((l) => l.top));
+      const bottom = Math.max(...selectedLines.map((l) => l.bottom));
+      pdfRect = toPdfRect(left, top, right, bottom);
 
-      let clippedText = record.item.str;
-      if (overlapFraction < 0.97) {
-        const len = record.item.str.length;
-        const startFrac = (clippedLeft - r.left) / r.width;
-        const endFrac = (clippedRight - r.left) / r.width;
-        const startIdx = Math.max(0, Math.floor(startFrac * len));
-        const endIdx = Math.min(len, Math.max(startIdx + 1, Math.ceil(endFrac * len)));
-        clippedText = record.item.str.slice(startIdx, endIdx);
-      }
+      // Style: whichever run covers the most characters across the whole
+      // selection wins, so one emphasized word doesn't make the entire
+      // redrawn block inherit its bold/italic.
+      const allSpans = selectedLines.flatMap((l) => l.spans);
+      const styleVotes = new Map<string, { fontFamily: string; bold: boolean; italic: boolean; chars: number }>();
+      allSpans.forEach(({ record }) => {
+        const key = `${record.fontFamily}|${record.bold}|${record.italic}`;
+        const entry = styleVotes.get(key);
+        const chars = record.item.str.length;
+        if (entry) {
+          entry.chars += chars;
+        } else {
+          styleVotes.set(key, { fontFamily: record.fontFamily, bold: record.bold, italic: record.italic, chars });
+        }
+      });
+      const anchorRecord = lines[touchedIdx].spans[0]?.record ?? allSpans[0].record;
+      let dominant = { fontFamily: anchorRecord.fontFamily, bold: anchorRecord.bold, italic: anchorRecord.italic, chars: -1 };
+      styleVotes.forEach((entry) => {
+        if (entry.chars > dominant.chars) dominant = entry;
+      });
 
-      matches.push({ record, clippedText, rect: r });
-    });
+      rawFontFamily = dominant.fontFamily;
+      bold = dominant.bold;
+      italic = dominant.italic;
+      detectedFontFamily = window.getComputedStyle(anchorRecord.element).fontFamily;
+      avgSizePt =
+        allSpans.reduce((sum, s) => sum + Math.hypot(s.record.item.transform[2], s.record.item.transform[3]), 0) /
+        allSpans.length;
 
-    matches.sort((a, b) => {
-      if (Math.abs(a.rect.top - b.rect.top) > 4) return a.rect.top - b.rect.top;
-      return a.rect.left - b.rect.left;
-    });
+      // Convert the screen-space line stride to PDF points via the
+      // viewport's own scale, so wrapped/re-laid-out lines use this
+      // block's actual original leading instead of a guessed value.
+      const gaps: number[] = [];
+      for (let i = 1; i < selectedLines.length; i++) gaps.push(selectedLines[i].midY - selectedLines[i - 1].midY);
+      const avgGap = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null;
+      lineHeightPt = (avgGap ?? avgSizePt * 1.15 * viewport.scale) / viewport.scale;
 
-    const detectedText = matches
-      .map((m) => m.clippedText)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const rep = matches[0]?.record;
-
-    const avgSizePt = matches.length
-      ? matches.reduce((sum, m) => sum + Math.hypot(m.record.item.transform[2], m.record.item.transform[3]), 0) / matches.length
-      : Math.max(6, Math.min(pdfRect.height * 0.72, 96));
-
-    const rawFontFamily = rep?.fontFamily ?? 'sans-serif';
-    const bold = rep?.bold ?? false;
-    const italic = rep?.italic ?? false;
-    const detectedFontFamily = rep ? window.getComputedStyle(rep.element).fontFamily : rawFontFamily;
+      // Every other text run on the page that sits below this block's
+      // original position, captured at its own true PDF-space baseline
+      // (item.transform[4]/[5] are already absolute page coordinates, no
+      // conversion needed) - if the edit changes the block's height,
+      // these get redrawn shifted by the difference so nothing overlaps
+      // or leaves a gap.
+      const selectedSpanSet = new Set(allSpans.map((s) => s.record));
+      belowSpans = spansRef.current
+        .filter((record) => !selectedSpanSet.has(record) && record.item.transform[5] < pdfRect.y + 1)
+        .map((record) => ({
+          text: record.item.str,
+          x: record.item.transform[4],
+          y: record.item.transform[5],
+          size: Math.hypot(record.item.transform[2], record.item.transform[3]),
+          fontFamily: record.fontFamily,
+          bold: record.bold,
+          italic: record.italic,
+        }));
+      // Same idea, but for non-text vector marks (table border rules,
+      // bullet dots) - see extractVectorMarks/RuleLine/BulletDot for why
+      // these need their own separate capture.
+      belowRules = rulesRef.current.filter((rule) => rule.y < pdfRect.y + 1);
+      belowDots = dotsRef.current.filter((dot) => dot.y < pdfRect.y + 1);
+    } else {
+      // No existing line touched - treat the literal drawn box as a blank
+      // area to add new content into.
+      pdfRect = toPdfRect(clientLeft, clientTop, clientLeft + width, dragBottom);
+      avgSizePt = Math.max(6, Math.min(pdfRect.height * 0.72, 96));
+      lineHeightPt = avgSizePt * 1.15;
+    }
 
     setSelected({
       pageNumber,
       pdfRect,
       rawFontFamily,
       detectedFontFamily,
-      detectedText,
+      mode: selectionMode,
+      items,
+      lineHeightPt,
+      belowSpans,
+      belowRules,
+      belowDots,
     });
-    setDraftText(detectedText);
+    setDraftItems(items);
     setOverrideBold(bold);
     setOverrideItalic(italic);
     setOverrideFontSize(Math.round(avgSizePt * 10) / 10);
@@ -438,51 +841,190 @@ function EditText() {
     window.addEventListener('mouseup', onUp);
   };
 
+  // Greedy word-wrap, matching the algorithm pdf-lib's own drawText uses
+  // internally for its maxWidth option - reimplemented here (rather than
+  // just calling drawText with maxWidth and trusting it) so the exact line
+  // count is known in advance, to size the whiteout box correctly instead
+  // of guessing.
+  const wrapLineCount = (text: string, font: PDFFont, size: number, maxWidth: number): number => {
+    const words = text.split(/\s+/).filter(Boolean);
+    if (!words.length) return 1;
+    let lines = 1;
+    let currentWidth = 0;
+    const spaceWidth = font.widthOfTextAtSize(' ', size);
+    words.forEach((word) => {
+      const wordWidth = font.widthOfTextAtSize(word, size);
+      const needed = currentWidth === 0 ? wordWidth : currentWidth + spaceWidth + wordWidth;
+      if (needed > maxWidth && currentWidth > 0) {
+        lines++;
+        currentWidth = wordWidth;
+      } else {
+        currentWidth = needed;
+      }
+    });
+    return lines;
+  };
+
   const applyEdit = async () => {
     if (!selected || !currentBytes) return;
     setIsSaving(true);
     setErrorMessage(null);
 
     try {
-      const { pdfRect } = selected;
+      const { pdfRect, lineHeightPt } = selected;
       const fontSizePt = Math.max(4, overrideFontSize);
 
       const pdfDoc = await PDFDocument.load(currentBytes);
       const page = pdfDoc.getPage(selected.pageNumber - 1);
+      const blockTopY = pdfRect.y + pdfRect.height;
+      const textStartX = pdfRect.x + 2;
+      // A few points wider than the original box, not narrower: the
+      // redraw uses a standard substitute font whose glyph widths won't
+      // exactly match the original embedded font's, so a line that
+      // exactly filled the box before could be measured a hair wider now
+      // - padding inward here would wrap lines that were never meant to.
+      const maxWidth = Math.max(20, pdfRect.width + 6);
 
-      // Redact the marked block boundary.
+      const hasContent = draftItems.some((t) => t.trim().length > 0);
+      const standardFont = matchStandardFont({
+        family: selected.rawFontFamily,
+        bold: overrideBold,
+        italic: overrideItalic,
+      });
+      const embeddedFont = hasContent ? await pdfDoc.embedFont(standardFont) : null;
+
+      // In 'points' mode each array item is its own line (blank items
+      // still take up a line, so removing a point - not just blanking it -
+      // is what actually shrinks the block); in 'paragraph'/'line' mode
+      // there's a single item that word-wraps as one block. Either way,
+      // summing each item's own wrapped line count gives the exact total
+      // height the redrawn block will need.
+      const itemLineCounts = embeddedFont
+        ? draftItems.map((t) => (t.trim() ? wrapLineCount(t, embeddedFont, fontSizePt, maxWidth) : 1))
+        : draftItems.map(() => 1);
+      const newBlockHeight = itemLineCounts.reduce((a, b) => a + b, 0) * lineHeightPt;
+      // Positive when the edit needs more room than the block had before,
+      // negative when it needs less (e.g. a point was removed).
+      const heightDelta = newBlockHeight - pdfRect.height;
+
+      // Keep the rule-line cache in sync with what this edit is about to
+      // do to the actual PDF, rather than ever re-deriving it from the
+      // PDF's own (increasingly ghost-laden) drawing operators: drop any
+      // rule that sat inside the edited block's own footprint (it's been
+      // superseded by the new content, same as the original text there),
+      // and shift every rule below by the same amount the text below is
+      // about to be shifted by.
+      const cachedPageRules = rulesCacheRef.current.get(selected.pageNumber) ?? [];
+      rulesCacheRef.current.set(
+        selected.pageNumber,
+        cachedPageRules
+          .filter((r) => r.y < pdfRect.y - 4 || r.y > pdfRect.y + pdfRect.height + 6)
+          .map((r) => (r.y < pdfRect.y + 1 ? { ...r, y: r.y - heightDelta } : r)),
+      );
+      // Same treatment for bullet dots.
+      const cachedPageDots = dotsCacheRef.current.get(selected.pageNumber) ?? [];
+      dotsCacheRef.current.set(
+        selected.pageNumber,
+        cachedPageDots
+          .filter((d) => d.y < pdfRect.y - 4 || d.y > pdfRect.y + pdfRect.height + 6)
+          .map((d) => (d.y < pdfRect.y + 1 ? { ...d, y: d.y - heightDelta } : d)),
+      );
+
+      // Redact the block's original footprint.
       page.drawRectangle({
-        x: pdfRect.x - 1,
-        y: pdfRect.y - 1,
-        width: pdfRect.width + 2,
-        height: pdfRect.height + 2,
+        x: pdfRect.x - 2,
+        y: pdfRect.y - 2,
+        width: pdfRect.width + 4,
+        height: pdfRect.height + 4,
         color: rgb(1, 1, 1),
         borderWidth: 0,
       });
 
-      if (draftText.length > 0) {
-        const standardFont = matchStandardFont({
-          family: selected.rawFontFamily,
-          bold: overrideBold,
-          italic: overrideItalic,
-        });
-        const embeddedFont = await pdfDoc.embedFont(standardFont);
+      const hasBelowContent =
+        selected.belowSpans.length > 0 || selected.belowRules.length > 0 || selected.belowDots.length > 0;
 
-        const verticalInset = Math.max(0, (pdfRect.height - fontSizePt) / 2);
-        const baselineY = pdfRect.y + verticalInset + fontSizePt * 0.18;
-
-        // Always a single line: wrapping onto a second line inside a fixed
-        // marked box risks colliding with whatever content sits just below
-        // it on the page. Overflowing sideways past the box when the new
-        // text is wider is more predictable - the user can redraw a wider
-        // box if that matters.
-        page.drawText(draftText, {
-          x: pdfRect.x + 2,
-          y: baselineY,
-          size: fontSizePt,
-          font: embeddedFont,
-          color: rgb(0, 0, 0),
+      if (heightDelta !== 0 && hasBelowContent) {
+        // The block's height changed - clear everything below its
+        // original position (full page width, down to the bottom) so
+        // redrawing it shifted by heightDelta doesn't leave old glyphs
+        // behind or draw over anything; also covers the case where the
+        // new block is taller and needs room past its old footprint.
+        page.drawRectangle({
+          x: 0,
+          y: 0,
+          width: page.getWidth(),
+          height: Math.max(0, pdfRect.y + 2),
+          color: rgb(1, 1, 1),
+          borderWidth: 0,
         });
+      }
+
+      if (embeddedFont) {
+        let cursorY = blockTopY;
+        draftItems.forEach((text, i) => {
+          const lineCount = itemLineCounts[i];
+          if (text.trim()) {
+            const verticalInset = Math.max(0, (lineHeightPt - fontSizePt) / 2);
+            const baselineY = cursorY - lineHeightPt + verticalInset + fontSizePt * 0.18;
+            page.drawText(text, {
+              x: textStartX,
+              y: baselineY,
+              size: fontSizePt,
+              font: embeddedFont,
+              color: rgb(0, 0, 0),
+              maxWidth,
+              lineHeight: lineHeightPt,
+            });
+          }
+          cursorY -= lineCount * lineHeightPt;
+        });
+      }
+
+      if (heightDelta !== 0 && hasBelowContent) {
+        const fontCache = new Map<string, PDFFont>();
+        for (const span of selected.belowSpans) {
+          if (!span.text.trim()) continue;
+          const key = `${span.fontFamily}|${span.bold}|${span.italic}`;
+          let belowFont = fontCache.get(key);
+          if (!belowFont) {
+            belowFont = await pdfDoc.embedFont(
+              matchStandardFont({ family: span.fontFamily, bold: span.bold, italic: span.italic }),
+            );
+            fontCache.set(key, belowFont);
+          }
+          page.drawText(span.text, {
+            x: span.x,
+            y: span.y - heightDelta,
+            size: span.size,
+            font: belowFont,
+            color: rgb(0, 0, 0),
+          });
+        }
+
+        // Table borders/rule lines below the edit point, put back in
+        // place shifted by the same amount as the text around them.
+        for (const rule of selected.belowRules) {
+          page.drawLine({
+            start: { x: rule.x0, y: rule.y - heightDelta },
+            end: { x: rule.x1, y: rule.y - heightDelta },
+            thickness: rule.thickness,
+            color: rgb(rule.color.r, rule.color.g, rule.color.b),
+          });
+        }
+
+        // Bullet dots below the edit point, same shift. Redrawn as a
+        // filled ellipse regardless of the original shape (circle,
+        // square, etc.) - a close enough visual match for a small marker,
+        // and far better than the alternative of having none at all.
+        for (const dot of selected.belowDots) {
+          page.drawEllipse({
+            x: dot.x,
+            y: dot.y - heightDelta,
+            xScale: dot.width / 2,
+            yScale: dot.height / 2,
+            color: rgb(dot.color.r, dot.color.g, dot.color.b),
+          });
+        }
       }
 
       const savedBytes = await pdfDoc.save();
@@ -516,6 +1058,8 @@ function EditText() {
   const resetState = () => {
     pdfDocRef.current = null;
     spansRef.current = [];
+    rulesCacheRef.current = new Map();
+    dotsCacheRef.current = new Map();
     setFileName(null);
     setCurrentBytes(null);
     setNumPages(0);
@@ -543,7 +1087,7 @@ function EditText() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight text-tool-foreground">Edit PDF Text</h1>
           <p className="mt-1.5 text-tool-foreground/60 text-sm">
-            Drag a box over the area you want to change - like a snipping tool - then type the replacement text.
+            Pick what a drag should select, then mark the area - like a snipping tool - to edit it, or drag over blank space to add new text.
           </p>
         </div>
 
@@ -583,7 +1127,7 @@ function EditText() {
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start mt-6">
             <div className="lg:col-span-3 space-y-4">
-              <div className="flex items-center justify-between bg-tool-card border border-tool-border rounded-xl px-4 py-2.5 shadow-sm">
+              <div className="flex items-center justify-between gap-3 flex-wrap bg-tool-card border border-tool-border rounded-xl px-4 py-2.5 shadow-sm">
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => goToPage(pageNumber - 1)}
@@ -602,6 +1146,28 @@ function EditText() {
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
+                </div>
+
+                <div className="flex items-center gap-1 bg-tool-secondary/40 rounded-lg p-0.5">
+                  {SELECTION_MODES.map((m) => (
+                    <button
+                      key={m.value}
+                      onClick={() => setSelectionMode(m.value)}
+                      title={
+                        m.value === 'paragraph'
+                          ? 'Merge every line the drag covers into one flowing, word-wrapped block'
+                          : m.value === 'points'
+                            ? 'Select each line as its own point you can add or remove'
+                            : 'Select just a single line'
+                      }
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs font-bold transition-colors',
+                        selectionMode === m.value ? 'bg-tool-primary text-white' : 'text-tool-foreground/60 hover:bg-tool-secondary',
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
                 </div>
 
                 <div className="flex items-center gap-1">
@@ -649,7 +1215,9 @@ function EditText() {
 
               <div className="text-xs text-tool-foreground/50 bg-tool-card border border-tool-border rounded-lg px-3 py-2 flex items-center gap-2">
                 <Info className="w-3.5 h-3.5 text-tool-primary shrink-0" />
-                Click and drag over the text you want to change, then release to open the edit panel.
+                {selectionMode === 'paragraph' && 'Click and drag across the lines you want, then release to edit them together as one flowing paragraph.'}
+                {selectionMode === 'points' && 'Click and drag across the lines you want as points, then release to add, remove, or edit them individually.'}
+                {selectionMode === 'line' && 'Click and drag across a single line, then release to edit just that line.'}
               </div>
             </div>
 
@@ -749,22 +1317,59 @@ function EditText() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-tool-foreground/50 uppercase tracking-wide">Detected In Marked Area</label>
+                    <label className="text-[11px] font-bold text-tool-foreground/50 uppercase tracking-wide">
+                      {selected.mode === 'points' ? 'Original Points' : selected.mode === 'line' ? 'Original Line' : 'Original Paragraph'}
+                    </label>
                     <p className="text-xs text-tool-foreground/50 bg-tool-secondary/30 rounded-lg px-3 py-2 italic truncate">
-                      {selected.detectedText || '(no existing text in this area)'}
+                      {selected.items.join(selected.mode === 'points' ? ' / ' : ' ').trim() ||
+                        `(blank area - no existing ${selected.mode === 'points' ? 'points' : selected.mode === 'line' ? 'line' : 'paragraph'} here)`}
                     </p>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-tool-foreground/50 uppercase tracking-wide">New Text</label>
-                    <input
-                      type="text"
-                      value={draftText}
-                      onChange={(e) => setDraftText(e.target.value)}
-                      className="w-full text-sm px-3 py-2 rounded-lg border border-tool-border bg-tool-bg text-tool-foreground focus:outline-none focus:ring-2 focus:ring-tool-primary/40"
-                      autoFocus
-                    />
-                  </div>
+                  {selected.mode === 'points' ? (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-tool-foreground/50 uppercase tracking-wide">Points</label>
+                      <div className="space-y-1.5">
+                        {draftItems.map((item, i) => (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={item}
+                              onChange={(e) =>
+                                setDraftItems((arr) => arr.map((v, idx) => (idx === i ? e.target.value : v)))
+                              }
+                              className="flex-1 min-w-0 text-sm px-3 py-2 rounded-lg border border-tool-border bg-tool-bg text-tool-foreground focus:outline-none focus:ring-2 focus:ring-tool-primary/40"
+                              autoFocus={i === 0}
+                            />
+                            <button
+                              onClick={() => setDraftItems((arr) => arr.filter((_, idx) => idx !== i))}
+                              title="Remove this point"
+                              className="p-2 rounded-lg hover:bg-tool-secondary text-tool-foreground/40 shrink-0"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => setDraftItems((arr) => [...arr, guessBulletPrefix(arr)])}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-bold border border-dashed border-tool-border text-tool-foreground/60 hover:bg-tool-secondary"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add point
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-tool-foreground/50 uppercase tracking-wide">New Text</label>
+                      <textarea
+                        value={draftItems[0] ?? ''}
+                        onChange={(e) => setDraftItems([e.target.value])}
+                        rows={5}
+                        className="w-full text-sm px-3 py-2 rounded-lg border border-tool-border bg-tool-bg text-tool-foreground focus:outline-none focus:ring-2 focus:ring-tool-primary/40 resize-y"
+                        autoFocus
+                      />
+                    </div>
+                  )}
 
                   <Button
                     onClick={applyEdit}
@@ -782,7 +1387,7 @@ function EditText() {
                 <div className="rounded-xl bg-emerald-400/10 border border-emerald-400/20 p-4 text-xs text-emerald-800 flex items-start gap-2.5 leading-normal">
                   <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   <p>
-                    <span className="font-bold">Tip:</span> Drag a rectangle over any text (or blank area) to mark it, then type the replacement text and apply.
+                    <span className="font-bold">Tip:</span> Pick Paragraph, Points, or Line above, then drag across the area to edit - it reflows like a document editor, shifting everything below it up or down the page if the edit changes its height.
                   </p>
                 </div>
               )}
