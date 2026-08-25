@@ -305,6 +305,13 @@ function EditText() {
   // Same reasoning and same cache-once-per-page treatment as rulesCacheRef
   // - see BulletDot for what these are and why they need it.
   const dotsCacheRef = useRef<Map<number, BulletDot[]>>(new Map());
+  // Every Y-range this tool has ever whited out on a page, across the
+  // whole edit session - see the dedup step in renderPage for why text
+  // needs this too, not just a (text, x) coincidence check: two
+  // different resume entries can legitimately share identical bullet
+  // wording (people reuse phrasing across jobs), and content-matching
+  // alone can't tell that apart from this tool's own redraw ghosts.
+  const erasedRegionsRef = useRef<Map<number, { y0: number; y1: number }[]>>(new Map());
 
   const [fileName, setFileName] = useState<string | null>(null);
   const [currentBytes, setCurrentBytes] = useState<Uint8Array | null>(null);
@@ -459,20 +466,36 @@ function EditText() {
       // still reports them. After this tool's own edits accumulate, the
       // SAME text at the SAME x can appear more than once: an original,
       // now-hidden copy plus whichever redraw(s) actually shifted it into
-      // view. Since our own redraws always preserve x exactly (only y
-      // moves), a duplicate (text, x) pair is - for this tool's own
-      // output - reliably a stale/hidden ghost, not a coincidence. Keep
-      // only the last (most recently drawn, and therefore genuinely
-      // visible) occurrence; otherwise a later edit's "shift everything
-      // below" pass would resurrect a hidden ghost as new opaque text at
-      // yet another position, compounding with every subsequent edit.
-      const lastIndexForKey = new Map<string, number>();
+      // view. But (text, x) matching alone can't be trusted as the sole
+      // signal - two different resume entries can legitimately share
+      // identical bullet wording (people reuse phrasing across jobs), and
+      // that looks exactly like a ghost/redraw pair by content alone. So
+      // an earlier occurrence is only dropped as a ghost if its position
+      // also falls inside a region THIS tool has actually whited out at
+      // some point (see erasedRegionsRef) - genuine duplicate content was
+      // never touched by an edit, so it never matches that second check.
+      const erasedRegions = erasedRegionsRef.current.get(pageNum) ?? [];
+      const wasErased = (y: number) => erasedRegions.some((r) => y >= r.y0 && y <= r.y1);
+
+      const occurrencesByKey = new Map<string, number[]>();
       records.forEach((r, idx) => {
-        lastIndexForKey.set(`${r.item.str}|${Math.round(r.item.transform[4])}`, idx);
+        const key = `${r.item.str}|${Math.round(r.item.transform[4])}`;
+        const list = occurrencesByKey.get(key);
+        if (list) list.push(idx);
+        else occurrencesByKey.set(key, [idx]);
       });
-      spansRef.current = records.filter(
-        (r, idx) => lastIndexForKey.get(`${r.item.str}|${Math.round(r.item.transform[4])}`) === idx,
-      );
+
+      const toDrop = new Set<number>();
+      occurrencesByKey.forEach((indices) => {
+        if (indices.length < 2) return;
+        // Every occurrence except the last (most recently drawn, i.e.
+        // currently visible) one is a ghost candidate.
+        indices.slice(0, -1).forEach((idx) => {
+          if (wasErased(records[idx].item.transform[5])) toDrop.add(idx);
+        });
+      });
+
+      spansRef.current = records.filter((_, idx) => !toDrop.has(idx));
     } finally {
       setIsRenderingPage(false);
     }
@@ -504,6 +527,7 @@ function EditText() {
     setEditCount(0);
     rulesCacheRef.current = new Map();
     dotsCacheRef.current = new Map();
+    erasedRegionsRef.current = new Map();
 
     try {
       const buffer = await file.arrayBuffer();
@@ -930,6 +954,14 @@ function EditText() {
           .map((d) => (d.y < pdfRect.y + 1 ? { ...d, y: d.y - heightDelta } : d)),
       );
 
+      // Record exactly which Y-ranges are about to be whited out, so a
+      // future render's text-dedup pass can tell a genuine ghost (which
+      // sits inside a region this tool itself erased) apart from
+      // coincidentally identical content elsewhere on the page that was
+      // never touched (see the dedup step in renderPage).
+      const pageErasedRegions = erasedRegionsRef.current.get(selected.pageNumber) ?? [];
+      pageErasedRegions.push({ y0: pdfRect.y - 2, y1: pdfRect.y + pdfRect.height + 2 });
+
       // Redact the block's original footprint.
       page.drawRectangle({
         x: pdfRect.x - 2,
@@ -949,6 +981,7 @@ function EditText() {
         // redrawing it shifted by heightDelta doesn't leave old glyphs
         // behind or draw over anything; also covers the case where the
         // new block is taller and needs room past its old footprint.
+        pageErasedRegions.push({ y0: 0, y1: Math.max(0, pdfRect.y + 2) });
         page.drawRectangle({
           x: 0,
           y: 0,
@@ -958,6 +991,8 @@ function EditText() {
           borderWidth: 0,
         });
       }
+
+      erasedRegionsRef.current.set(selected.pageNumber, pageErasedRegions);
 
       if (embeddedFont) {
         let cursorY = blockTopY;
@@ -1060,6 +1095,7 @@ function EditText() {
     spansRef.current = [];
     rulesCacheRef.current = new Map();
     dotsCacheRef.current = new Map();
+    erasedRegionsRef.current = new Map();
     setFileName(null);
     setCurrentBytes(null);
     setNumPages(0);
