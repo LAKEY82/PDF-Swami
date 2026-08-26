@@ -3,7 +3,7 @@ import { motion, useMotionValue, useSpring } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import swamiLogo from '@/assets/swami.png';
+import swamiLogo from '@/assets/swami.webp';
 
 // Interface for the props of each individual icon.
 interface IconProps {
